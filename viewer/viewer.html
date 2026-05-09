@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PDF Translator</title>
+  <link rel="stylesheet" href="viewer.css">
+</head>
+<body>
+  <!-- 顶部工具栏 -->
+  <div class="toolbar">
+    <div class="toolbar-left">
+      <button class="model-badge" id="model-badge" title="点击切换模型设置">⚙ 加载中...</button>
+      <div class="toolbar-sep"></div>
+      <label class="file-btn" for="pdf-upload">📄 打开 PDF</label>
+      <input type="file" id="pdf-upload" accept=".pdf" hidden>
+      <span class="file-name" id="file-name">未选择文件</span>
+    </div>
+    <div class="toolbar-center">
+      <button id="prev-page" title="上一页">◀</button>
+      <span id="page-info">0 / 0</span>
+      <button id="next-page" title="下一页">▶</button>
+      <button id="zoom-out" title="缩小">−</button>
+      <span id="zoom-level">100%</span>
+      <button id="zoom-in" title="放大">+</button>
+    </div>
+    <div class="toolbar-right">
+      <button id="translate-btn" class="translate-btn" disabled>翻译当前页</button>
+      <button id="translate-all-btn" class="translate-btn" disabled>翻译全部</button>
+      <span class="status" id="status"></span>
+    </div>
+  </div>
+
+  <!-- 主要内容区：左右分栏 -->
+  <div class="main-container">
+    <!-- 左侧 PDF 显示区 -->
+    <div class="panel panel-left" id="panel-left">
+      <div class="panel-header">📖 原文 PDF</div>
+      <div class="pdf-container" id="pdf-container">
+        <div class="placeholder" id="placeholder">
+          <div class="placeholder-icon">📄</div>
+          <div class="placeholder-text">点击上方"打开 PDF"按钮<br>或将 PDF 文件拖放到此处</div>
+        </div>
+        <canvas id="pdf-canvas"></canvas>
+      </div>
+    </div>
+
+    <!-- 中间拖动条 -->
+    <div class="divider" id="divider"></div>
+
+    <!-- 右侧翻译显示区 -->
+    <div class="panel panel-right" id="panel-right">
+      <div class="panel-header">🔤 中文翻译</div>
+      <div class="translation-container" id="translation-container">
+        <div class="placeholder" id="translation-placeholder">
+          <div class="placeholder-icon">🔤</div>
+          <div class="placeholder-text">打开 PDF 后点击"翻译"按钮<br>翻译内容将显示在此处</div>
+        </div>
+        <div class="translation-content" id="translation-content"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 设置弹窗 -->
+  <div class="settings-overlay hidden" id="settings-overlay"></div>
+  <div class="settings-modal hidden" id="settings-modal">
+    <div class="settings-header">
+      <span>⚙ 翻译设置</span>
+      <button class="settings-close" id="settings-close">✕</button>
+    </div>
+    <div class="settings-body">
+      <div class="settings-group">
+        <label>翻译服务</label>
+        <select id="s-provider">
+          <option value="deepl">DeepL</option>
+          <option value="openai">OpenAI (GPT)</option>
+          <option value="deepseek">DeepSeek</option>
+          <option value="custom">自定义 API</option>
+        </select>
+      </div>
+      <div class="settings-group settings-custom-only hidden" id="s-custom-format-group">
+        <label>API 格式</label>
+        <div class="format-switch" id="s-format-switch">
+          <button class="format-option active" data-format="openai">OpenAI</button>
+          <button class="format-option" data-format="anthropic">Anthropic</button>
+        </div>
+        <div class="settings-hint" id="s-format-hint">OpenAI Chat Completions 兼容格式</div>
+      </div>
+      <div class="settings-group settings-custom-only hidden" id="s-custom-url-group">
+        <label>API 端点 URL</label>
+        <input type="text" id="s-custom-url" placeholder="https://your-api.com/v1/chat/completions">
+        <div class="settings-hint">填写完整的 Chat Completions 接口地址</div>
+      </div>
+      <div class="settings-group">
+        <label>API Key</label>
+        <input type="password" id="s-api-key" placeholder="输入你的 API Key">
+        <div class="settings-hint" id="s-key-hint">DeepL Free Key 以 :fx 结尾</div>
+      </div>
+      <div class="settings-group hidden" id="s-model-group">
+        <label>模型</label>
+        <select id="s-model">
+          <option value="gpt-4o">GPT-4o (推荐)</option>
+          <option value="gpt-4o-mini">GPT-4o-mini (更快更便宜)</option>
+          <option value="gpt-4-turbo">GPT-4 Turbo</option>
+        </select>
+      </div>
+      <div class="settings-group settings-custom-only hidden" id="s-custom-model-group">
+        <label>模型名称</label>
+        <input type="text" id="s-custom-model" placeholder="例如: qwen-turbo, claude-3-sonnet, glm-4">
+        <div class="settings-hint">填写模型 ID，需与 API 供应商支持的模型名称一致</div>
+      </div>
+    </div>
+    <div class="settings-footer">
+      <div class="settings-msg" id="s-msg"></div>
+      <button class="settings-save" id="s-save">保存设置</button>
+    </div>
+  </div>
+
+  <!-- PDF.js 本地加载（需要先运行 setup.py 下载） -->
+  <script src="../lib/pdf.min.js"></script>
+  <script src="viewer.js"></script>
+</body>
+</html>
