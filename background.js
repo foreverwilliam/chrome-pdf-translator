@@ -40,6 +40,41 @@ async function parseJsonResponse(response, serviceName) {
   return response.json();
 }
 
+// 安全提取 OpenAI 兼容格式的翻译结果
+function extractChoicesText(data, serviceName) {
+  if (!data.choices || !Array.isArray(data.choices) || data.choices.length === 0) {
+    console.error(serviceName + ' 返回数据结构异常:', JSON.stringify(data).substring(0, 500));
+    throw new Error(serviceName + ' 返回数据中缺少 choices 字段，返回的 keys: ' + Object.keys(data).join(', '));
+  }
+  const msg = data.choices[0].message;
+  if (!msg || typeof msg.content !== 'string') {
+    console.error(serviceName + ' choices[0] 结构异常:', JSON.stringify(data.choices[0]).substring(0, 300));
+    throw new Error(serviceName + ' 返回的 choices[0].message 格式不正确');
+  }
+  return msg.content.trim();
+}
+
+// 安全提取 Anthropic 格式的翻译结果
+function extractAnthropicText(data, serviceName) {
+  if (!data.content || !Array.isArray(data.content) || data.content.length === 0) {
+    console.error(serviceName + ' 返回数据结构异常:', JSON.stringify(data).substring(0, 500));
+    throw new Error(serviceName + ' 返回数据中缺少 content 字段，返回的 keys: ' + Object.keys(data).join(', '));
+  }
+  if (typeof data.content[0].text !== 'string') {
+    throw new Error(serviceName + ' 返回的 content[0].text 格式不正确');
+  }
+  return data.content[0].text;
+}
+
+// 安全提取 DeepL 格式的翻译结果
+function extractDeepLText(data) {
+  if (!data.translations || !Array.isArray(data.translations) || data.translations.length === 0) {
+    console.error('DeepL 返回数据结构异常:', JSON.stringify(data).substring(0, 500));
+    throw new Error('DeepL 返回数据中缺少 translations 字段');
+  }
+  return data.translations[0].text;
+}
+
 // 翻译处理函数
 async function handleTranslation(text, provider, apiKey, model, customUrl, customModel, customFormat) {
   if (!apiKey) {
@@ -79,7 +114,7 @@ async function translateWithDeepL(text, apiKey) {
   });
 
   const data = await parseJsonResponse(response, 'DeepL');
-  return data.translations[0].text;
+  return extractDeepLText(data);
 }
 
 // OpenAI 翻译
@@ -107,7 +142,7 @@ async function translateWithOpenAI(text, apiKey, model) {
   });
 
   const data = await parseJsonResponse(response, 'OpenAI');
-  return data.choices[0].message.content.trim();
+  return extractChoicesText(data, 'OpenAI');
 }
 
 // DeepSeek 翻译（兼容 OpenAI 接口格式）
@@ -135,7 +170,7 @@ async function translateWithDeepSeek(text, apiKey, model) {
   });
 
   const data = await parseJsonResponse(response, 'DeepSeek');
-  return data.choices[0].message.content.trim();
+  return extractChoicesText(data, 'DeepSeek');
 }
 
 // 自定义供应商翻译（支持 OpenAI 兼容格式和 Anthropic Messages 格式）
@@ -153,6 +188,7 @@ async function translateWithCustom(text, apiKey, customUrl, customModel, customF
       method: 'POST',
       headers: {
         'x-api-key': apiKey,
+        'Authorization': 'Bearer ' + apiKey,
         'anthropic-version': '2023-06-01',
         'Content-Type': 'application/json'
       },
@@ -170,7 +206,12 @@ async function translateWithCustom(text, apiKey, customUrl, customModel, customF
     });
 
     const data = await parseJsonResponse(response, '自定义 API (Anthropic)');
-    return data.content[0].text;
+    // 智能检测：如果 API 实际返回 OpenAI 格式（有 choices），自动回退
+    if (data.choices && Array.isArray(data.choices)) {
+      console.warn('设置为 Anthropic 格式，但 API 返回了 OpenAI 格式（含 choices），自动按 OpenAI 格式提取');
+      return extractChoicesText(data, '自定义 API (Anthropic→OpenAI 自动回退)');
+    }
+    return extractAnthropicText(data, '自定义 API (Anthropic)');
   } else {
     // OpenAI Chat Completions 兼容格式
     const response = await fetch(customUrl, {
@@ -196,6 +237,11 @@ async function translateWithCustom(text, apiKey, customUrl, customModel, customF
     });
 
     const data = await parseJsonResponse(response, '自定义 API');
-    return data.choices[0].message.content.trim();
+    // 智能检测：如果 API 实际返回 Anthropic 格式（有 content 数组无 choices），自动回退
+    if (!data.choices && data.content && Array.isArray(data.content)) {
+      console.warn('设置为 OpenAI 格式，但 API 返回了 Anthropic 格式（含 content），自动按 Anthropic 格式提取');
+      return extractAnthropicText(data, '自定义 API (OpenAI→Anthropic 自动回退)');
+    }
+    return extractChoicesText(data, '自定义 API');
   }
 }

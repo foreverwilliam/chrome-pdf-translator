@@ -52,7 +52,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function updateFormatHint(format) {
     if (!formatHint) return;
     if (format === 'anthropic') {
-      formatHint.textContent = 'Anthropic Messages API 格式（x-api-key 认证）';
+      formatHint.textContent = 'Anthropic Messages 格式（x-api-key + Bearer，兼容官方 API 与中转网关）';
     } else {
       formatHint.textContent = 'OpenAI Chat Completions 兼容格式';
     }

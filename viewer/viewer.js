@@ -14,6 +14,8 @@
     scale: 1.0,
     translations: {},  // { pageNum: { paragraphs: [...], translated: [...] } }
     isTranslating: false,
+    bilingual: false,
+    theme: 'dark',
     settings: {
       provider: 'deepl',
       apiKey: '',
@@ -63,7 +65,11 @@
     sFormatHint: document.getElementById('s-format-hint'),
     sKeyHint: document.getElementById('s-key-hint'),
     sSave: document.getElementById('s-save'),
-    sMsg: document.getElementById('s-msg')
+    sMsg: document.getElementById('s-msg'),
+    // 双语 + 主题按钮
+    bilingualBtn: document.getElementById('bilingual-btn'),
+    themeBtn: document.getElementById('theme-btn'),
+    translationContainer: document.getElementById('translation-container')
   };
 
   const ctx = els.pdfCanvas.getContext('2d');
@@ -81,17 +87,23 @@
   // 加载用户设置
   function loadSettings() {
     if (typeof chrome !== 'undefined' && chrome.storage) {
-      chrome.storage.local.get(['provider', 'apiKey', 'model', 'customUrl', 'customModel', 'customFormat'], (data) => {
+      chrome.storage.local.get(['provider', 'apiKey', 'model', 'customUrl', 'customModel', 'customFormat', 'bilingual', 'theme'], (data) => {
         if (data.provider) state.settings.provider = data.provider;
         if (data.apiKey) state.settings.apiKey = data.apiKey;
         if (data.model) state.settings.model = data.model;
         if (data.customUrl) state.settings.customUrl = data.customUrl;
         if (data.customModel) state.settings.customModel = data.customModel;
         if (data.customFormat) state.settings.customFormat = data.customFormat;
+        if (data.bilingual !== undefined) state.bilingual = data.bilingual;
+        if (data.theme) state.theme = data.theme;
         updateModelBadge();
+        applyBilingualState();
+        applyThemeState();
       });
     } else {
       updateModelBadge();
+      applyBilingualState();
+      applyThemeState();
     }
   }
 
@@ -104,6 +116,8 @@
     els.zoomOut.addEventListener('click', () => setZoom(state.scale - 0.15));
     els.translateBtn.addEventListener('click', () => translatePage(state.currentPage));
     els.translateAllBtn.addEventListener('click', translateAllPages);
+    els.bilingualBtn.addEventListener('click', toggleBilingual);
+    els.themeBtn.addEventListener('click', toggleTheme);
   }
 
   // ===== 文件选择 =====
@@ -366,7 +380,7 @@
       });
 
       const data = await parseJsonResponse(resp, 'DeepL');
-      return data.translations[0].text;
+      return extractDeepLText(data);
     }
 
     if (provider === 'openai') {
@@ -387,7 +401,7 @@
       });
 
       const data = await parseJsonResponse(resp, 'OpenAI');
-      return data.choices[0].message.content.trim();
+      return extractChoicesText(data, 'OpenAI');
     }
 
     if (provider === 'deepseek') {
@@ -408,7 +422,7 @@
       });
 
       const data = await parseJsonResponse(resp, 'DeepSeek');
-      return data.choices[0].message.content.trim();
+      return extractChoicesText(data, 'DeepSeek');
     }
 
     if (provider === 'custom') {
@@ -424,6 +438,7 @@
           method: 'POST',
           headers: {
             'x-api-key': apiKey,
+            'Authorization': 'Bearer ' + apiKey,
             'anthropic-version': '2023-06-01',
             'Content-Type': 'application/json'
           },
@@ -438,7 +453,12 @@
         });
 
         const data = await parseJsonResponse(resp, '自定义 API (Anthropic)');
-        return data.content[0].text;
+        // 智能检测：如果 API 实际返回 OpenAI 格式（有 choices），自动回退
+        if (data.choices && Array.isArray(data.choices)) {
+          console.warn('设置为 Anthropic 格式，但 API 返回了 OpenAI 格式，自动回退');
+          return extractChoicesText(data, '自定义 API (Anthropic→OpenAI 自动回退)');
+        }
+        return extractAnthropicText(data, '自定义 API (Anthropic)');
       } else {
         // OpenAI Chat Completions 兼容格式
         resp = await fetch(customUrl, {
@@ -458,7 +478,12 @@
         });
 
         const data = await parseJsonResponse(resp, '自定义 API');
-        return data.choices[0].message.content.trim();
+        // 智能检测：如果 API 实际返回 Anthropic 格式（有 content 数组无 choices），自动回退
+        if (!data.choices && data.content && Array.isArray(data.content)) {
+          console.warn('设置为 OpenAI 格式，但 API 返回了 Anthropic 格式，自动回退');
+          return extractAnthropicText(data, '自定义 API (OpenAI→Anthropic 自动回退)');
+        }
+        return extractChoicesText(data, '自定义 API');
       }
     }
 
@@ -486,6 +511,41 @@
     }
 
     return resp.json();
+  }
+
+  // 安全提取 OpenAI 兼容格式的翻译结果
+  function extractChoicesText(data, serviceName) {
+    if (!data.choices || !Array.isArray(data.choices) || data.choices.length === 0) {
+      console.error(serviceName + ' 返回数据结构异常:', JSON.stringify(data).substring(0, 500));
+      throw new Error(serviceName + ' 返回数据中缺少 choices 字段，返回的 keys: ' + Object.keys(data).join(', '));
+    }
+    const msg = data.choices[0].message;
+    if (!msg || typeof msg.content !== 'string') {
+      console.error(serviceName + ' choices[0] 结构异常:', JSON.stringify(data.choices[0]).substring(0, 300));
+      throw new Error(serviceName + ' 返回的 choices[0].message 格式不正确');
+    }
+    return msg.content.trim();
+  }
+
+  // 安全提取 Anthropic 格式的翻译结果
+  function extractAnthropicText(data, serviceName) {
+    if (!data.content || !Array.isArray(data.content) || data.content.length === 0) {
+      console.error(serviceName + ' 返回数据结构异常:', JSON.stringify(data).substring(0, 500));
+      throw new Error(serviceName + ' 返回数据中缺少 content 字段，返回的 keys: ' + Object.keys(data).join(', '));
+    }
+    if (typeof data.content[0].text !== 'string') {
+      throw new Error(serviceName + ' 返回的 content[0].text 格式不正确');
+    }
+    return data.content[0].text;
+  }
+
+  // 安全提取 DeepL 格式的翻译结果
+  function extractDeepLText(data) {
+    if (!data.translations || !Array.isArray(data.translations) || data.translations.length === 0) {
+      console.error('DeepL 返回数据结构异常:', JSON.stringify(data).substring(0, 500));
+      throw new Error('DeepL 返回数据中缺少 translations 字段');
+    }
+    return data.translations[0].text;
   }
 
   // ===== 显示翻译结果 =====
@@ -632,6 +692,48 @@
     });
   }
 
+  // ===== 双语对照模式切换 =====
+  function toggleBilingual() {
+    state.bilingual = !state.bilingual;
+    applyBilingualState();
+    // 持久化
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      chrome.storage.local.set({ bilingual: state.bilingual });
+    }
+  }
+
+  function applyBilingualState() {
+    if (state.bilingual) {
+      els.translationContainer.classList.add('bilingual-mode');
+      els.bilingualBtn.textContent = '双语 ✓';
+      els.bilingualBtn.classList.add('active');
+    } else {
+      els.translationContainer.classList.remove('bilingual-mode');
+      els.bilingualBtn.textContent = '双语 ✗';
+      els.bilingualBtn.classList.remove('active');
+    }
+  }
+
+  // ===== 日间/夜间模式切换 =====
+  function toggleTheme() {
+    state.theme = state.theme === 'dark' ? 'light' : 'dark';
+    applyThemeState();
+    // 持久化
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      chrome.storage.local.set({ theme: state.theme });
+    }
+  }
+
+  function applyThemeState() {
+    if (state.theme === 'light') {
+      document.body.classList.add('light-theme');
+      els.themeBtn.textContent = '🌙 夜间';
+    } else {
+      document.body.classList.remove('light-theme');
+      els.themeBtn.textContent = '☀ 日间';
+    }
+  }
+
   // ===== 工具函数 =====
   function setStatus(text) {
     els.status.textContent = text;
@@ -764,7 +866,7 @@
   function updateFormatHint(format) {
     if (!els.sFormatHint) return;
     if (format === 'anthropic') {
-      els.sFormatHint.textContent = 'Anthropic Messages API 格式（x-api-key 认证）';
+      els.sFormatHint.textContent = 'Anthropic Messages 格式（x-api-key + Bearer，兼容官方 API 与中转网关）';
     } else {
       els.sFormatHint.textContent = 'OpenAI Chat Completions 兼容格式';
     }
