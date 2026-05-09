@@ -9,3 +9,6 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# Local knowledge graph (optional dev tool)
+graphify-out/
