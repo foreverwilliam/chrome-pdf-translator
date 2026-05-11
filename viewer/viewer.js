@@ -260,13 +260,14 @@
   }
 
   // ===== 翻译单页 =====
+  const PARAGRAPH_SEPARATOR = '\n\n---SPLIT---\n\n';
+
   async function translatePage(pageNum) {
     if (state.isTranslating) return;
 
     // 检查设置
     if (!state.settings.apiKey) {
       setStatus('⚠️ 请先点击插件图标设置 API Key');
-      // 尝试重新加载设置
       loadSettings();
       return;
     }
@@ -284,23 +285,40 @@
         return;
       }
 
-      // 显示加载状态
       showTranslationLoading(pageNum, paragraphs.length);
+      setStatus('正在翻译第 ' + pageNum + ' 页（共 ' + paragraphs.length + ' 段）...');
 
-      // 逐段翻译
-      const translated = [];
-      for (let i = 0; i < paragraphs.length; i++) {
-        setStatus('正在翻译第 ' + pageNum + ' 页 (' + (i + 1) + '/' + paragraphs.length + ')...');
+      let finalTranslated;
 
-        const result = await doTranslate(paragraphs[i]);
-        translated.push(result);
+      if (state.settings.provider === 'deepl') {
+        // DeepL 原生支持数组批量翻译
+        finalTranslated = await doTranslateDeepLBatch(paragraphs);
+      } else {
+        // LLM 类服务：合并段落为一次请求
+        const batchText = paragraphs.join(PARAGRAPH_SEPARATOR);
+        const batchResult = await doTranslate(batchText);
 
-        // 实时更新翻译结果
-        updateTranslationParagraph(pageNum, i, paragraphs[i], result);
+        // 按分隔符拆分结果
+        const translated = batchResult.split(/\n*---SPLIT---\n*/).map(s => s.trim());
+
+        if (translated.length === paragraphs.length) {
+          finalTranslated = translated;
+        } else {
+          const fallback = batchResult.split(/\n{2,}/).map(s => s.trim()).filter(s => s);
+          if (fallback.length === paragraphs.length) {
+            finalTranslated = fallback;
+          } else {
+            finalTranslated = paragraphs.map((_, i) => i === 0 ? batchResult.trim() : '');
+          }
+        }
       }
 
-      // 保存翻译结果
-      state.translations[pageNum] = { paragraphs, translated };
+      // 更新 UI
+      for (let i = 0; i < paragraphs.length; i++) {
+        updateTranslationParagraph(pageNum, i, paragraphs[i], finalTranslated[i] || '');
+      }
+
+      state.translations[pageNum] = { paragraphs, translated: finalTranslated };
       setStatus('第 ' + pageNum + ' 页翻译完成 ✓');
     } catch (err) {
       setStatus('翻译失败: ' + err.message);
@@ -393,7 +411,7 @@
         body: JSON.stringify({
           model: model || 'gpt-4o',
           messages: [
-            { role: 'system', content: '你是一个专业的英中翻译器。请将以下英文文本翻译成简体中文。翻译准确、自然流畅，保持原文段落结构。只输出翻译结果。' },
+            { role: 'system', content: '你是一个专业的英中翻译器。请将以下英文文本翻译成简体中文。翻译准确、自然流畅。输入中各段落以 ---SPLIT--- 分隔，输出也必须用 ---SPLIT--- 分隔对应的翻译结果，保持段落数量一致。只输出翻译结果。' },
             { role: 'user', content: text }
           ],
           temperature: 0.3
@@ -414,7 +432,7 @@
         body: JSON.stringify({
           model: model || 'deepseek-chat',
           messages: [
-            { role: 'system', content: '你是一个专业的英中翻译器。请将以下英文文本翻译成简体中文。翻译准确、自然流畅，保持原文段落结构。只输出翻译结果。' },
+            { role: 'system', content: '你是一个专业的英中翻译器。请将以下英文文本翻译成简体中文。翻译准确、自然流畅。输入中各段落以 ---SPLIT--- 分隔，输出也必须用 ---SPLIT--- 分隔对应的翻译结果，保持段落数量一致。只输出翻译结果。' },
             { role: 'user', content: text }
           ],
           temperature: 0.3
@@ -431,10 +449,17 @@
       }
 
       const format = customFormat || 'openai';
+      const baseUrl = customUrl.replace(/\/+$/, '');
+      let endpoint;
+      if (format === 'anthropic') {
+        endpoint = baseUrl.includes('/v1/messages') ? baseUrl : baseUrl + '/v1/messages';
+      } else {
+        endpoint = baseUrl.includes('/v1/chat/completions') ? baseUrl : baseUrl + '/v1/chat/completions';
+      }
 
       if (format === 'anthropic') {
         // Anthropic Messages API 格式
-        resp = await fetch(customUrl, {
+        resp = await fetch(endpoint, {
           method: 'POST',
           headers: {
             'x-api-key': apiKey,
@@ -445,7 +470,7 @@
           body: JSON.stringify({
             model: customModel,
             max_tokens: 4096,
-            system: '你是一个专业的英中翻译器。请将以下英文文本翻译成简体中文。翻译准确、自然流畅，保持原文段落结构。只输出翻译结果。',
+            system: '你是一个专业的英中翻译器。请将以下英文文本翻译成简体中文。翻译准确、自然流畅。输入中各段落以 ---SPLIT--- 分隔，输出也必须用 ---SPLIT--- 分隔对应的翻译结果，保持段落数量一致。只输出翻译结果。',
             messages: [
               { role: 'user', content: text }
             ]
@@ -453,7 +478,6 @@
         });
 
         const data = await parseJsonResponse(resp, '自定义 API (Anthropic)');
-        // 智能检测：如果 API 实际返回 OpenAI 格式（有 choices），自动回退
         if (data.choices && Array.isArray(data.choices)) {
           console.warn('设置为 Anthropic 格式，但 API 返回了 OpenAI 格式，自动回退');
           return extractChoicesText(data, '自定义 API (Anthropic→OpenAI 自动回退)');
@@ -461,7 +485,7 @@
         return extractAnthropicText(data, '自定义 API (Anthropic)');
       } else {
         // OpenAI Chat Completions 兼容格式
-        resp = await fetch(customUrl, {
+        resp = await fetch(endpoint, {
           method: 'POST',
           headers: {
             'Authorization': 'Bearer ' + apiKey,
@@ -470,7 +494,7 @@
           body: JSON.stringify({
             model: customModel,
             messages: [
-              { role: 'system', content: '你是一个专业的英中翻译器。请将以下英文文本翻译成简体中文。翻译准确、自然流畅，保持原文段落结构。只输出翻译结果。' },
+              { role: 'system', content: '你是一个专业的英中翻译器。请将以下英文文本翻译成简体中文。翻译准确、自然流畅。输入中各段落以 ---SPLIT--- 分隔，输出也必须用 ---SPLIT--- 分隔对应的翻译结果，保持段落数量一致。只输出翻译结果。' },
               { role: 'user', content: text }
             ],
             temperature: 0.3
@@ -488,6 +512,29 @@
     }
 
     throw new Error('未知翻译服务: ' + provider);
+  }
+
+  // DeepL 批量翻译（利用原生数组支持）
+  async function doTranslateDeepLBatch(paragraphs) {
+    const { apiKey } = state.settings;
+    const baseUrl = apiKey.endsWith(':fx')
+      ? 'https://api-free.deepl.com/v2/translate'
+      : 'https://api.deepl.com/v2/translate';
+
+    const resp = await fetch(baseUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': 'DeepL-Auth-Key ' + apiKey,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ text: paragraphs, target_lang: 'ZH' })
+    });
+
+    const data = await parseJsonResponse(resp, 'DeepL');
+    if (!data.translations || !Array.isArray(data.translations)) {
+      throw new Error('DeepL 返回数据中缺少 translations 字段');
+    }
+    return data.translations.map(t => t.text);
   }
 
   // 安全解析 JSON 响应，遇到 HTML 时给出清晰错误

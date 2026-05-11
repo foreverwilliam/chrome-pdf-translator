@@ -130,7 +130,7 @@ async function translateWithOpenAI(text, apiKey, model) {
       messages: [
         {
           role: 'system',
-          content: '你是一个专业的英中翻译器。请将以下英文文本翻译成简体中文。要求：翻译准确、自然流畅，保持原文的段落结构。只输出翻译结果，不要添加任何解释。'
+          content: '你是一个专业的英中翻译器。请将以下英文文本翻译成简体中文。要求：翻译准确、自然流畅。输入中各段落以 ---SPLIT--- 分隔，输出也必须用 ---SPLIT--- 分隔对应的翻译结果，保持段落数量一致。只输出翻译结果，不要添加任何解释。'
         },
         {
           role: 'user',
@@ -158,7 +158,7 @@ async function translateWithDeepSeek(text, apiKey, model) {
       messages: [
         {
           role: 'system',
-          content: '你是一个专业的英中翻译器。请将以下英文文本翻译成简体中文。要求：翻译准确、自然流畅，保持原文的段落结构。只输出翻译结果，不要添加任何解释。'
+          content: '你是一个专业的英中翻译器。请将以下英文文本翻译成简体中文。要求：翻译准确、自然流畅。输入中各段落以 ---SPLIT--- 分隔，输出也必须用 ---SPLIT--- 分隔对应的翻译结果，保持段落数量一致。只输出翻译结果，不要添加任何解释。'
         },
         {
           role: 'user',
@@ -182,9 +182,18 @@ async function translateWithCustom(text, apiKey, customUrl, customModel, customF
     throw new Error('请先在插件设置中配置自定义模型名称');
   }
 
+  // 自动拼接路径：用户只需填 base URL
+  const baseUrl = customUrl.replace(/\/+$/, '');
+  let endpoint;
+  if (customFormat === 'anthropic') {
+    endpoint = baseUrl.includes('/v1/messages') ? baseUrl : baseUrl + '/v1/messages';
+  } else {
+    endpoint = baseUrl.includes('/v1/chat/completions') ? baseUrl : baseUrl + '/v1/chat/completions';
+  }
+
   if (customFormat === 'anthropic') {
     // Anthropic Messages API 格式
-    const response = await fetch(customUrl, {
+    const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
         'x-api-key': apiKey,
@@ -195,7 +204,7 @@ async function translateWithCustom(text, apiKey, customUrl, customModel, customF
       body: JSON.stringify({
         model: customModel,
         max_tokens: 4096,
-        system: '你是一个专业的英中翻译器。请将以下英文文本翻译成简体中文。要求：翻译准确、自然流畅，保持原文的段落结构。只输出翻译结果，不要添加任何解释。',
+        system: '你是一个专业的英中翻译器。请将以下英文文本翻译成简体中文。要求：翻译准确、自然流畅。输入中各段落以 ---SPLIT--- 分隔，输出也必须用 ---SPLIT--- 分隔对应的翻译结果，保持段落数量一致。只输出翻译结果，不要添加任何解释。',
         messages: [
           {
             role: 'user',
@@ -214,7 +223,7 @@ async function translateWithCustom(text, apiKey, customUrl, customModel, customF
     return extractAnthropicText(data, '自定义 API (Anthropic)');
   } else {
     // OpenAI Chat Completions 兼容格式
-    const response = await fetch(customUrl, {
+    const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
         'Authorization': 'Bearer ' + apiKey,
@@ -225,7 +234,7 @@ async function translateWithCustom(text, apiKey, customUrl, customModel, customF
         messages: [
           {
             role: 'system',
-            content: '你是一个专业的英中翻译器。请将以下英文文本翻译成简体中文。要求：翻译准确、自然流畅，保持原文的段落结构。只输出翻译结果，不要添加任何解释。'
+            content: '你是一个专业的英中翻译器。请将以下英文文本翻译成简体中文。要求：翻译准确、自然流畅。输入中各段落以 ---SPLIT--- 分隔，输出也必须用 ---SPLIT--- 分隔对应的翻译结果，保持段落数量一致。只输出翻译结果，不要添加任何解释。'
           },
           {
             role: 'user',
